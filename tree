@@ -1,0 +1,35 @@
+─assets
+│   ├───materials
+│   ├───models
+│   └───textures
+├───scenes
+│   │   World.tscn
+│   │
+│   ├───Construction
+│   │       ConstructionManager.gd
+│   │       ConstructionManager.gd.uid
+│   │       Foundation.gd
+│   │       Foundation.gd.uid
+│   │       Foundation.tscn
+│   │
+│   ├───Player
+│   │       Player.tscn
+│   │       PlayerController.gd
+│   │       PlayerController.gd.uid
+│   │
+│   ├───UI
+│   └───World
+│           Chunk.gd
+│           Chunk.gd.uid
+│           Chunk.tscn
+│           TerrainManager.gd
+│           TerrainManager.gd.uid
+│
+└───scripts
+    ├───managers
+    │       GameManager.gd
+    │       GameManager.gd.uid
+    │
+    └───utils
+            FoundationGroup.gd
+            FoundationGroup.gd.uid
