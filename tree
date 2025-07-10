@@ -33,3 +33,24 @@
     └───utils
             FoundationGroup.gd
             FoundationGroup.gd.uid
+
+
+
+foxhole_test/
+├── assets/
+│   ├── materials/
+│   ├── models/
+│   └── textures/
+├── Chunk.gd (gestion des chunks de terrain)
+├── Chunk.tscn (scène chunk)
+├── ConstructionManager.gd (système de construction)
+├── Foundation.gd (logique fondations)
+├── Foundation.tscn (scène fondation)
+├── FoundationGroup.gd (groupement fondations)
+├── GameManager.gd (gestionnaire principal du jeu)
+├── Player.tscn (scène joueur)
+├── PlayerController.gd (contrôleur FPS)
+├── TerrainManager.gd (génération procédurale)
+├── World.tscn (scène monde principal)
+├── project.godot (configuration Godot)
+└── tree (cette structure)
