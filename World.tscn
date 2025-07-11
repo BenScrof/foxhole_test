@@ -1,7 +1,9 @@
-[gd_scene load_steps=4 format=3 uid="uid://cu37pg1agac46"]
+[gd_scene load_steps=6 format=3 uid="uid://cu37pg1agac46"]
 
 [ext_resource type="Script" uid="uid://duskud52glr56" path="res://scenes/World/TerrainManager.gd" id="1"]
 [ext_resource type="PackedScene" uid="uid://pvdjfttnhgvb" path="res://scenes/Player/Player.tscn" id="2"]
+[ext_resource type="Script" uid="uid://d2c5rq612114v" path="res://scenes/Construction/ConstructionManager.gd" id="3_d1c63"]
+[ext_resource type="Script" uid="uid://441c2tm6rrwv" path="res://scripts/managers/GameManager.gd" id="4_1lgw5"]
 
 [sub_resource type="Environment" id="1"]
 background_mode = 1
@@ -20,3 +22,9 @@ transform = Transform3D(0.707, -0.5, 0.5, 0, 0.707, 0.707, -0.707, -0.5, 0.5, 0,
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="."]
 environment = SubResource("1")
+
+[node name="ConstructionManager" type="Node3D" parent="."]
+script = ExtResource("3_d1c63")
+
+[node name="GameManager" type="Node3D" parent="."]
+script = ExtResource("4_1lgw5")

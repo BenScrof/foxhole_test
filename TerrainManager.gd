@@ -7,14 +7,14 @@ extends Node3D
 class_name TerrainManager
 
 # Paramètres des chunks
-@export var chunk_size: int = 32
+@export var chunk_size: int = 16
 @export var chunk_resolution: int = 16
-@export var view_distance: int = 4         # AUGMENTÉ pour couvrir plus de zone
-@export var unload_distance: int = 6
+@export var view_distance: int = 10       # AUGMENTÉ pour couvrir plus de zone
+@export var unload_distance: int = 12
 
 # Paramètres du terrain
-@export var terrain_height: float = 5.0
-@export var terrain_scale: float = 0.08
+@export var terrain_height: float = 3.0
+@export var terrain_scale: float = 0.01
 @export var terrain_octaves: int = 2
 
 # Données internes
@@ -24,7 +24,7 @@ var noise: FastNoiseLite
 var chunk_scene: PackedScene
 
 func _ready():
-	add_to_group("world")
+	add_to_group("world")  # ← CETTE LIGNE EST CRUCIALE
 	print("🌍 === INITIALISATION SYSTÈME DE CHUNKS CORRIGÉ ===")
 	
 	_setup_noise()

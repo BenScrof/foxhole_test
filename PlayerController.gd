@@ -21,6 +21,7 @@ var gravity = ProjectSettings.get_setting("physics/3d/default_gravity")
 var look_rotation: Vector2 = Vector2.ZERO
 
 func _ready():
+	add_to_group("player")  # ← CETTE LIGNE EST CRUCIALE
 	# Capturer la souris
 	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 	

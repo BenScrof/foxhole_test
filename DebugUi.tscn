@@ -1,0 +1,28 @@
+[gd_scene load_steps=2 format=3 uid="uid://bh18khr5yn1vd"]
+
+[ext_resource type="Script" uid="uid://jxbkjtn1up6j" path="res://scenes/UI/DebugUI.gd" id="1_tbmal"]
+
+[node name="DebugUI" type="Control"]
+layout_mode = 3
+anchors_preset = 0
+script = ExtResource("1_tbmal")
+
+[node name="VBox" type="VBoxContainer" parent="."]
+layout_mode = 0
+offset_right = 40.0
+offset_bottom = 40.0
+
+[node name="FPSLabel" type="Label" parent="VBox"]
+layout_mode = 2
+
+[node name="ChunksLabel" type="Label" parent="VBox"]
+layout_mode = 2
+
+[node name="PlayerPosLabel" type="Label" parent="VBox"]
+layout_mode = 2
+
+[node name="PlayerChunkLabel" type="Label" parent="VBox"]
+layout_mode = 2
+
+[node name="MemoryLabel" type="Label" parent="VBox"]
+layout_mode = 2
