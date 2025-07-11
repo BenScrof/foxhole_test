@@ -18,6 +18,8 @@
 │   │       PlayerController.gd.uid
 │   │
 │   ├───UI
+│   │    DebugUI.gd
+│   │    DebugUi.tscn
 │   └───World
 │           Chunk.gd
 │           Chunk.gd.uid
