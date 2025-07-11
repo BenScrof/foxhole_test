@@ -43,6 +43,8 @@ foxhole_test/
 │   ├── materials/
 │   ├── models/
 │   └── textures/
+├── DebugUI.gd
+├── DebugUi.tscn
 ├── Chunk.gd (gestion des chunks de terrain)
 ├── Chunk.tscn (scène chunk)
 ├── ConstructionManager.gd (système de construction)
