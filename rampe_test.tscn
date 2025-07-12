@@ -1,0 +1,19 @@
+[gd_scene load_steps=3 format=3 uid="uid://cj4uta5vf3es4"]
+
+[sub_resource type="PrismMesh" id="PrismMesh_tge12"]
+left_to_right = 1.0
+size = Vector3(2, 0.2, 4)
+
+[sub_resource type="ConvexPolygonShape3D" id="ConvexPolygonShape3D_tge12"]
+points = PackedVector3Array(1, 0.1, 2, 1, -0.1, 2, 1, 0.1, -2, -1, -0.1, 2, 1, -0.1, -2, -1, -0.1, -2)
+
+[node name="RampeTest" type="StaticBody3D"]
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="."]
+mesh = SubResource("PrismMesh_tge12")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+shape = SubResource("ConvexPolygonShape3D_tge12")
+
+[node name="SnapPoint_Entry" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0)

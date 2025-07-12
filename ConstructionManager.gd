@@ -1,5 +1,5 @@
 # ============================================
-# ConstructionManager.gd - Biseaux Conditionnels
+# ConstructionManager.gd - Version Optimisée Mémoire
 # ============================================
 
 extends Node3D
@@ -10,10 +10,10 @@ class_name ConstructionManager
 @export var grid_snap: bool = true
 @export var preview_alpha: float = 0.6
 
-@export_group("Biseaux")
-@export var bevel_width: float = 0.5
-@export var bevel_height: float = 0.1
-@export var auto_remove_bevels: bool = true
+@export_group("Types de Construction")
+@export var build_mode: String = "foundation"  # "foundation", "ramp"
+@export var foundation_model_path: String = "res://assets/models/fondation.tscn"
+@export var ramp_model_path: String = "res://assets/models/rampe_test.tscn"
 
 var is_building: bool = false
 var current_rotation: float = 0.0
@@ -25,14 +25,30 @@ var preview_valid: bool = false
 var preview_position: Vector3
 
 var foundation_material: StandardMaterial3D
+var ramp_material: StandardMaterial3D
 var preview_material_valid: StandardMaterial3D
 var preview_material_invalid: StandardMaterial3D
+
+var foundation_scene: PackedScene
+var ramp_scene: PackedScene
+
+# Cache pour optimisation mémoire
+var foundation_mesh_cache: Mesh
+var ramp_mesh_cache: Mesh
+var ramp_snap_cache: Vector3
+var foundation_snap_cache: Dictionary
 
 var player: Player
 var camera: Camera3D
 var terrain_manager: TerrainManager
 
 var placed_foundations: Array[Dictionary] = []
+var selected_face: int = 0  # 0=droite, 1=arrière, 2=gauche, 3=avant
+var ramp_base_rotation: Vector3 = Vector3.ZERO
+
+# Optimisation : réduire fréquence de mise à jour
+var update_counter: int = 0
+var update_frequency: int = 3  # Mise à jour tous les 3 frames
 
 func _ready():
 	add_to_group("construction_manager")
@@ -42,7 +58,7 @@ func _ready():
 	await get_tree().process_frame
 	_find_references()
 	
-	print("🔨 Construction avec biseaux conditionnels")
+	print("🔨 Construction avec optimisations mémoire")
 
 func _find_references():
 	player = get_tree().get_first_node_in_group("player")
@@ -56,6 +72,10 @@ func _setup_materials():
 	foundation_material.albedo_color = Color(0.7, 0.7, 0.7)
 	foundation_material.roughness = 0.6
 	
+	ramp_material = StandardMaterial3D.new()
+	ramp_material.albedo_color = Color(0.6, 0.5, 0.4)
+	ramp_material.roughness = 0.7
+	
 	preview_material_valid = StandardMaterial3D.new()
 	preview_material_valid.albedo_color = Color(0.3, 1.0, 0.3, preview_alpha)
 	preview_material_valid.flags_transparent = true
@@ -64,17 +84,105 @@ func _setup_materials():
 	preview_material_invalid.albedo_color = Color(1.0, 0.3, 0.3, preview_alpha)
 	preview_material_invalid.flags_transparent = true
 
+	# Charger et mettre en cache les modèles
+	_load_and_cache_models()
+
+func _load_and_cache_models():
+	# Cache fondation
+	if ResourceLoader.exists(foundation_model_path):
+		foundation_scene = load(foundation_model_path)
+		print("✅ Modèle fondation chargé: ", foundation_model_path)
+		_cache_foundation_data()
+	else:
+		print("⚠️ Modèle fondation non trouvé: ", foundation_model_path)
+		
+	# Cache rampe
+	if ResourceLoader.exists(ramp_model_path):
+		ramp_scene = load(ramp_model_path)
+		print("✅ Modèle rampe chargé: ", ramp_model_path)
+		_cache_ramp_data()
+	else:
+		print("⚠️ Modèle rampe non trouvé: ", ramp_model_path)
+
+func _cache_foundation_data():
+	"""Mettre en cache les données de la fondation pour éviter les instances répétées"""
+	if not foundation_scene:
+		return
+		
+	var temp_instance = foundation_scene.instantiate()
+	
+	# Cache mesh
+	var mesh_node = temp_instance.find_child("MeshInstance3D")
+	if mesh_node:
+		foundation_mesh_cache = mesh_node.mesh
+	
+	# Cache snap points
+	foundation_snap_cache = {}
+	for child in temp_instance.get_children():
+		if child.name.begins_with("SnapPoint_"):
+			var snap_name = child.name.replace("SnapPoint_", "")
+			foundation_snap_cache[snap_name] = child.position
+	
+	temp_instance.queue_free()
+	print("📦 Cache fondation: ", foundation_snap_cache.size(), " snaps")
+
+func _cache_ramp_data():
+	"""Mettre en cache les données de la rampe"""
+	if not ramp_scene:
+		return
+		
+	var temp_instance = ramp_scene.instantiate()
+	
+	# Cache mesh
+	var mesh_node = temp_instance.find_child("MeshInstance3D")
+	if mesh_node:
+		ramp_mesh_cache = mesh_node.mesh
+		ramp_base_rotation = mesh_node.rotation_degrees
+	
+	# Cache snap point
+	var snap_entry = temp_instance.find_child("SnapPoint_Entry")
+	if snap_entry:
+		ramp_snap_cache = snap_entry.position
+	
+	temp_instance.queue_free()
+	print("📦 Cache rampe: snap à ", ramp_snap_cache)
+
 func _setup_preview():
 	preview_object = MeshInstance3D.new()
-	var box_mesh = BoxMesh.new()
-	box_mesh.size = Vector3(foundation_size, 0.3, foundation_size)
-	preview_object.mesh = box_mesh
+	_update_preview_mesh()
 	add_child(preview_object)
 	preview_object.visible = false
+
+func _update_preview_mesh():
+	preview_object.transform = Transform3D.IDENTITY
+	
+	match build_mode:
+		"foundation":
+			if foundation_mesh_cache:
+				preview_object.mesh = foundation_mesh_cache
+			else:
+				var box_mesh = BoxMesh.new()
+				box_mesh.size = Vector3(foundation_size, 0.3, foundation_size)
+				preview_object.mesh = box_mesh
+		"ramp":
+			if ramp_mesh_cache:
+				preview_object.mesh = ramp_mesh_cache
+			else:
+				var prism_mesh = PrismMesh.new()
+				prism_mesh.left_to_right = 1.0
+				prism_mesh.size = Vector3(2, 0.2, 4)
+				preview_object.mesh = prism_mesh
 
 func _input(event):
 	if event.is_action_pressed("build_mode"):
 		toggle_build_mode()
+	
+	if event is InputEventKey and event.pressed and event.keycode == KEY_F:
+		_cycle_build_mode()
+	
+	if event is InputEventKey and event.pressed and event.keycode == KEY_TAB and build_mode == "ramp":
+		_cycle_face()
+		get_viewport().set_input_as_handled()
 	
 	if is_building:
 		if event.is_action_pressed("height_up"):
@@ -86,10 +194,30 @@ func _input(event):
 		rotate_preview()
 	
 	if is_building and (event.is_action_pressed("ui_accept") or event.is_action_pressed("place_building")):
-		_try_place_foundation()
+		_try_place_structure()
 	
 	if is_building and (event.is_action_pressed("ui_cancel") or event.is_action_pressed("cancel_building")):
 		toggle_build_mode()
+
+func _cycle_build_mode():
+	match build_mode:
+		"foundation":
+			build_mode = "ramp"
+			selected_face = 0
+			print("🏗️ Mode: Rampe (Tab pour changer face)")
+		"ramp":
+			build_mode = "foundation"
+			print("🏗️ Mode: Fondation")
+	
+	_update_preview_mesh()
+	
+	if is_building:
+		preview_object.visible = true
+
+func _cycle_face():
+	selected_face = (selected_face + 1) % 4
+	var face_names = ["Nord (Droite)", "Est (Arrière)", "Sud (Gauche)", "Ouest (Avant)"]
+	print("🔄 Face: ", face_names[selected_face])
 
 func adjust_build_height(delta: float):
 	current_build_height += delta
@@ -98,15 +226,15 @@ func adjust_build_height(delta: float):
 
 func toggle_build_mode():
 	is_building = !is_building
-	preview_object.visible = is_building
 	current_rotation = 0.0
 	
 	if is_building:
 		print("🔨 Mode construction")
-		if Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
-			Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+		_update_preview_mesh()
+		preview_object.visible = true
 	else:
-		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+		preview_object.visible = false
+		print("🚶 Mode déplacement")
 
 func rotate_preview():
 	current_rotation += rotation_step
@@ -115,12 +243,21 @@ func rotate_preview():
 
 func _process(_delta):
 	if is_building and preview_object.visible:
-		_update_preview()
+		update_counter += 1
+		if update_counter >= update_frequency:
+			update_counter = 0
+			_update_preview()
 
 func _update_preview():
 	if not player or not camera:
 		return
 	
+	if build_mode == "foundation":
+		_update_foundation_preview()
+	elif build_mode == "ramp":
+		_update_ramp_preview()
+
+func _update_foundation_preview():
 	var target_position = _calculate_build_position()
 	
 	if target_position != Vector3.INF:
@@ -129,8 +266,9 @@ func _update_preview():
 		
 		target_position.y = current_build_height
 		preview_position = target_position
+		
 		preview_object.global_position = target_position
-		preview_object.rotation_degrees.y = current_rotation
+		preview_object.rotation_degrees = Vector3(0, current_rotation, 0)
 		
 		preview_valid = _is_position_valid(target_position)
 		
@@ -143,13 +281,49 @@ func _update_preview():
 	else:
 		preview_object.visible = false
 
+func _update_ramp_preview():
+	var face_data = _get_face_placement_data()
+	
+	if face_data.has("foundation"):
+		var snap_data = _calculate_snap_position(face_data.foundation)
+		
+		if snap_data.has("position"):
+			preview_position = snap_data.position
+			
+			var final_rotation = ramp_base_rotation + snap_data.rotation
+			
+			preview_object.global_position = snap_data.position
+			preview_object.rotation_degrees = final_rotation
+			
+			preview_valid = true
+			preview_object.material_override = preview_material_valid
+		else:
+			preview_valid = false
+			preview_object.material_override = preview_material_invalid
+		
+		preview_object.visible = true
+	else:
+		var target_position = _calculate_build_position()
+		
+		if target_position != Vector3.INF:
+			preview_position = target_position
+			
+			var final_rotation = ramp_base_rotation + _get_face_rotation(selected_face)
+			
+			preview_object.global_position = target_position
+			preview_object.rotation_degrees = final_rotation
+			
+			preview_valid = false
+			preview_object.material_override = preview_material_invalid
+			preview_object.visible = true
+		else:
+			preview_object.visible = false
+
 func _calculate_build_position() -> Vector3:
+	var from = camera.global_position
+	var to = from + (-camera.global_transform.basis.z) * max_build_distance
+	
 	var space_state = get_world_3d().direct_space_state
-	var mouse_pos = get_viewport().get_mouse_position()
-	
-	var from = camera.project_ray_origin(mouse_pos)
-	var to = from + camera.project_ray_normal(mouse_pos) * max_build_distance
-	
 	var query = PhysicsRayQueryParameters3D.create(from, to)
 	query.exclude = [player]
 	
@@ -162,175 +336,184 @@ func _calculate_build_position() -> Vector3:
 	
 	return Vector3.INF
 
+func _get_face_placement_data() -> Dictionary:
+	var from = camera.global_position
+	var to = from + (-camera.global_transform.basis.z) * max_build_distance
+	
+	var space_state = get_world_3d().direct_space_state
+	var query = PhysicsRayQueryParameters3D.create(from, to)
+	query.exclude = [player]
+	
+	var result = space_state.intersect_ray(query)
+	
+	if result and result.collider and _is_foundation(result.collider):
+		return {
+			"position": result.position,
+			"normal": result.normal,
+			"foundation": result.collider
+		}
+	
+	return {}
+
+func _is_foundation(object: Node) -> bool:
+	if not object:
+		return false
+	
+	var current = object
+	while current:
+		if current.name.begins_with("Foundation") or current.name.begins_with("Fondation"):
+			return true
+		current = current.get_parent()
+		if current == get_tree().root:
+			break
+	
+	return false
+
 func _snap_to_grid(pos: Vector3) -> Vector3:
 	var snapped_x = round(pos.x / foundation_size) * foundation_size
 	var snapped_z = round(pos.z / foundation_size) * foundation_size
 	return Vector3(snapped_x, pos.y, snapped_z)
 
 func _is_position_valid(pos: Vector3) -> bool:
-	var grid_2d = Vector2i(int(pos.x / foundation_size), int(pos.z / foundation_size))
-	
-	for foundation_data in placed_foundations:
-		if foundation_data.grid_pos == grid_2d:
+	if build_mode == "foundation":
+		if player and player.global_position.distance_to(pos) > max_build_distance:
 			return false
+		return true
 	
 	if player and player.global_position.distance_to(pos) > max_build_distance:
 		return false
 	
 	return true
 
-func _try_place_foundation():
+func _try_place_structure():
 	if not preview_valid:
-		print("❌ Impossible de placer ici!")
+		print("❌ Placement impossible")
 		return
 	
-	_place_foundation_at(preview_position)
+	if build_mode == "foundation":
+		_place_foundation_at(preview_position)
+	elif build_mode == "ramp":
+		_place_ramp_at(preview_position)
 
 func _place_foundation_at(pos: Vector3):
 	var grid_2d = Vector2i(int(pos.x / foundation_size), int(pos.z / foundation_size))
 	
-	# Créer la fondation avec biseaux par défaut
-	var foundation = _create_beveled_foundation(pos, grid_2d)
+	var foundation = _create_foundation_from_scene(pos)
 	
 	var foundation_data = {
 		"node": foundation,
 		"height": pos.y,
-		"grid_pos": grid_2d,
-		"mesh_instance": foundation.get_child(0)
+		"grid_pos": grid_2d
 	}
 	
 	placed_foundations.append(foundation_data)
 	
-	# Mettre à jour cette fondation et ses voisines
-	if auto_remove_bevels:
-		_update_bevels_around(grid_2d)
-	
 	print("✅ Fondation placée! Total: ", placed_foundations.size())
 
-func _create_beveled_foundation(pos: Vector3, grid_pos: Vector2i) -> StaticBody3D:
-	var foundation = StaticBody3D.new()
-	foundation.name = "BeveledFoundation_" + str(placed_foundations.size())
+func _create_foundation_from_scene(pos: Vector3) -> Node3D:
+	if not foundation_scene:
+		return null
 	
-	var mesh_instance = MeshInstance3D.new()
-	var mesh = _create_foundation_mesh_with_bevels(grid_pos)
-	mesh_instance.mesh = mesh
-	mesh_instance.material_override = foundation_material
-	foundation.add_child(mesh_instance)
+	var foundation = foundation_scene.instantiate()
+	foundation.name = "Foundation_" + str(placed_foundations.size())
 	
-	# Collision simple
-	var collision_shape = CollisionShape3D.new()
-	var box_shape = BoxShape3D.new()
-	box_shape.size = Vector3(foundation_size, 0.3, foundation_size)
-	collision_shape.shape = box_shape
-	foundation.add_child(collision_shape)
+	var collision_node = foundation.find_child("CollisionShape3D")
+	if collision_node:
+		var collision_parent = collision_node.get_parent()
+		if not collision_parent is StaticBody3D:
+			var static_body = StaticBody3D.new()
+			static_body.name = "StaticBody3D"
+			foundation.add_child(static_body)
+			
+			var mesh_node = foundation.find_child("MeshInstance3D")
+			if mesh_node:
+				mesh_node.reparent(static_body)
+			collision_node.reparent(static_body)
 	
-	foundation.rotation_degrees.y = current_rotation
 	get_tree().root.add_child(foundation)
 	foundation.global_position = pos
+	foundation.rotation_degrees.y = current_rotation
 	
 	return foundation
 
-func _create_foundation_mesh_with_bevels(grid_pos: Vector2i) -> ArrayMesh:
-	var arrays = []
-	arrays.resize(Mesh.ARRAY_MAX)
+func _place_ramp_at(pos: Vector3):
+	if not ramp_scene:
+		print("❌ Modèle rampe non disponible")
+		return
 	
-	var vertices = PackedVector3Array()
-	var normals = PackedVector3Array()
-	var uvs = PackedVector2Array()
-	var indices = PackedInt32Array()
+	var ramp_instance = ramp_scene.instantiate()
+	ramp_instance.name = "Ramp_" + str(placed_foundations.size())
 	
-	var half_size = foundation_size / 2.0
-	var bevel_size = bevel_width
-	var top_height = 0.15
+	get_tree().root.add_child(ramp_instance)
+	ramp_instance.global_position = pos
+	ramp_instance.rotation_degrees = preview_object.rotation_degrees
 	
-	# Déterminer quels côtés ont des voisins
-	var has_neighbors = {
-		"right": _has_neighbor(grid_pos + Vector2i(1, 0)),
-		"left": _has_neighbor(grid_pos + Vector2i(-1, 0)),
-		"back": _has_neighbor(grid_pos + Vector2i(0, 1)),
-		"forward": _has_neighbor(grid_pos + Vector2i(0, -1))
+	print("✅ Rampe placée avec snap!")
+
+func _get_snap_points(object: Node3D) -> Dictionary:
+	var snap_points = {}
+	
+	for child in object.get_children():
+		if child.name.begins_with("SnapPoint_"):
+			var snap_name = child.name.replace("SnapPoint_", "")
+			snap_points[snap_name] = child.global_position
+	
+	return snap_points
+
+func _calculate_snap_position(foundation: Node3D) -> Dictionary:
+	var foundation_snaps = _get_snap_points(foundation)
+	
+	var face_to_snap = {
+		0: "Side_North",
+		1: "Side_East", 
+		2: "Side_South",
+		3: "Side_West"
 	}
 	
-	var resolution = 8
+	var target_snap = face_to_snap.get(selected_face, "Side_North")
 	
-	for z in range(resolution + 1):
-		for x in range(resolution + 1):
-			var local_x = (x / float(resolution) - 0.5) * foundation_size
-			var local_z = (z / float(resolution) - 0.5) * foundation_size
-			
-			var height_adjustment = 0.0
-			
-			# Appliquer biseaux seulement sur les côtés sans voisins
-			if local_x > half_size - bevel_size and not has_neighbors["right"]:
-				var factor = (local_x - (half_size - bevel_size)) / bevel_size
-				height_adjustment -= bevel_height * factor
-			
-			if local_x < -(half_size - bevel_size) and not has_neighbors["left"]:
-				var factor = (-(half_size - bevel_size) - local_x) / bevel_size
-				height_adjustment -= bevel_height * factor
-			
-			if local_z > half_size - bevel_size and not has_neighbors["back"]:
-				var factor = (local_z - (half_size - bevel_size)) / bevel_size
-				height_adjustment -= bevel_height * factor
-			
-			if local_z < -(half_size - bevel_size) and not has_neighbors["forward"]:
-				var factor = (-(half_size - bevel_size) - local_z) / bevel_size
-				height_adjustment -= bevel_height * factor
-			
-			vertices.append(Vector3(local_x, top_height + height_adjustment, local_z))
-			normals.append(Vector3.UP)
-			uvs.append(Vector2(x / float(resolution), z / float(resolution)))
+	if foundation_snaps.has(target_snap):
+		var foundation_snap_pos = foundation_snaps[target_snap]
+		var face_rotation = _get_face_rotation(selected_face)
+		
+		var ramp_snap_offset = _get_ramp_entry_offset()
+		
+		var total_rotation = ramp_base_rotation.y + face_rotation.y
+		var rotated_offset = ramp_snap_offset.rotated(Vector3.UP, deg_to_rad(total_rotation))
+		
+		var final_position = foundation_snap_pos - rotated_offset
+		var final_rotation = ramp_base_rotation + face_rotation
+		
+		return {
+			"position": final_position,
+			"rotation": final_rotation
+		}
 	
-	# Triangles
-	for z in range(resolution):
-		for x in range(resolution):
-			var i = z * (resolution + 1) + x
-			
-			indices.append(i)
-			indices.append(i + 1)
-			indices.append(i + resolution + 1)
-			
-			indices.append(i + 1)
-			indices.append(i + resolution + 2)
-			indices.append(i + resolution + 1)
-	
-	arrays[Mesh.ARRAY_VERTEX] = vertices
-	arrays[Mesh.ARRAY_NORMAL] = normals
-	arrays[Mesh.ARRAY_TEX_UV] = uvs
-	arrays[Mesh.ARRAY_INDEX] = indices
-	
-	var mesh = ArrayMesh.new()
-	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-	return mesh
+	return {}
 
-func _has_neighbor(grid_pos: Vector2i) -> bool:
-	for foundation_data in placed_foundations:
-		if foundation_data.grid_pos == grid_pos:
-			return true
-	return false
+func _get_ramp_entry_offset() -> Vector3:
+	return ramp_snap_cache
 
-func _update_bevels_around(center_grid_pos: Vector2i):
-	var positions_to_update = [
-		center_grid_pos,
-		center_grid_pos + Vector2i(1, 0),
-		center_grid_pos + Vector2i(-1, 0),
-		center_grid_pos + Vector2i(0, 1),
-		center_grid_pos + Vector2i(0, -1)
-	]
-	
-	for grid_pos in positions_to_update:
-		for foundation_data in placed_foundations:
-			if foundation_data.grid_pos == grid_pos:
-				var new_mesh = _create_foundation_mesh_with_bevels(grid_pos)
-				foundation_data.mesh_instance.mesh = new_mesh
-				break
+func _get_face_rotation(face_index: int) -> Vector3:
+	match face_index:
+		0: return Vector3(0, -180, 0)   # Droite (Nord)
+		1: return Vector3(0, 90, 0)     # Arrière (Est)
+		2: return Vector3(0, 0, 0)      # Gauche (Sud)
+		3: return Vector3(0, -90, 0)    # Avant (Ouest)
+		_: return Vector3.ZERO
 
 func get_foundation_count() -> int:
 	return placed_foundations.size()
 
 func clear_all_foundations():
 	for foundation_data in placed_foundations:
-		if foundation_data.node:
+		if foundation_data.node and is_instance_valid(foundation_data.node):
 			foundation_data.node.queue_free()
 	placed_foundations.clear()
 	current_build_height = 0.0
+	
+	print("🧹 Nettoyage mémoire effectué")
+
+func _notification(what):
+	if what == NOTIFICATION_WM_CLOSE_REQUEST:
+		clear_all_foundations()

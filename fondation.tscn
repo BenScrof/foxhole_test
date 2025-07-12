@@ -1,0 +1,31 @@
+[gd_scene load_steps=3 format=3 uid="uid://3tdn5vi5u4ip"]
+
+[sub_resource type="BoxMesh" id="BoxMesh_ga06v"]
+size = Vector3(4, 0.2, 4)
+
+[sub_resource type="ConcavePolygonShape3D" id="ConcavePolygonShape3D_ga06v"]
+data = PackedVector3Array(-2, 0.1, 2, 2, 0.1, 2, -2, -0.1, 2, 2, 0.1, 2, 2, -0.1, 2, -2, -0.1, 2, 2, 0.1, -2, -2, 0.1, -2, 2, -0.1, -2, -2, 0.1, -2, -2, -0.1, -2, 2, -0.1, -2, 2, 0.1, 2, 2, 0.1, -2, 2, -0.1, 2, 2, 0.1, -2, 2, -0.1, -2, 2, -0.1, 2, -2, 0.1, -2, -2, 0.1, 2, -2, -0.1, -2, -2, 0.1, 2, -2, -0.1, 2, -2, -0.1, -2, 2, 0.1, 2, -2, 0.1, 2, 2, 0.1, -2, -2, 0.1, 2, -2, 0.1, -2, 2, 0.1, -2, -2, -0.1, 2, 2, -0.1, 2, -2, -0.1, -2, 2, -0.1, 2, 2, -0.1, -2, -2, -0.1, -2)
+
+[node name="Fondation" type="StaticBody3D"]
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.1, 0)
+mesh = SubResource("BoxMesh_ga06v")
+
+[node name="SnapPoint_Top" type="Node3D" parent="."]
+
+[node name="SnapPoint_Side_North" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2, -0.1, 0)
+
+[node name="SnapPoint_Side_South" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2, -0.1, 0)
+
+[node name="SnapPoint_Side_East" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.1, 2)
+
+[node name="SnapPoint_Side_West" type="Node3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.1, -2)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.1, 0)
+shape = SubResource("ConcavePolygonShape3D_ga06v")
