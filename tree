@@ -1,6 +1,8 @@
 ─assets
 │   ├───materials
 │   ├───models
+│   │     fondation.tscn
+│   │     rampe_test.tscn
 │   └───textures
 ├───scenes
 │   │   World.tscn
@@ -42,6 +44,8 @@ foxhole_test/
 ├── assets/
 │   ├── materials/
 │   ├── models/
+│   │     fondation.tscn
+│   │     rampe_test.tscn
 │   └── textures/
 ├── DebugUI.gd
 ├── DebugUi.tscn
