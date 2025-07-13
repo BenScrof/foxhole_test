@@ -1,6 +1,0 @@
-[gd_scene load_steps=2 format=3 uid="uid://dqg5qi8r827w7"]
-
-[ext_resource type="Script" uid="uid://rt401ddlaal3" path="res://scenes/Construction/Foundation.gd" id="1"]
-
-[node name="Foundation" type="StaticBody3D"]
-script = ExtResource("1")
