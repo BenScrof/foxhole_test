@@ -115,10 +115,34 @@ func _initialize_stats():
 		"build_time_total": 0.0
 	}
 
+
 func _input(event):
 	# Gestion des états globaux
 	if event.is_action_pressed("ui_cancel"):
 		_handle_escape_key()
+	
+	# ÉVÉNEMENTS DE DEBUG (maintenant ça devrait marcher) :
+	
+	# F3 : Diagnostic complet du système de chunks
+	if event is InputEventKey and event.pressed and event.keycode == KEY_F3:
+		DebugUtils.debug_chunk_system()
+	
+	# F4 : Afficher positions des chunks
+	if event is InputEventKey and event.pressed and event.keycode == KEY_F4:
+		DebugUtils.debug_chunk_positions()
+	
+	# F5 : Forcer rechargement des chunks
+	if event is InputEventKey and event.pressed and event.keycode == KEY_F5:
+		DebugUtils.force_chunk_reload()
+	
+	# F6 : Afficher grille visuelle des chunks
+	if event is InputEventKey and event.pressed and event.keycode == KEY_F6:
+		DebugUtils.show_chunk_grid_in_3d()
+	
+	# F7 : Test de téléportation
+	if event is InputEventKey and event.pressed and event.keycode == KEY_F7:
+		_test_teleportation()
+
 
 func _handle_escape_key():
 	"""Gestion de la touche Échap selon l'état"""
@@ -253,3 +277,30 @@ func debug_info() -> String:
 	if terrain_manager:
 		info += "Chunks: " + str(terrain_manager.loaded_chunks.size()) + "\n"
 	return info
+
+# ============================================
+# GameManager.gd - CORRECTION IMPORT DebugUtils
+
+
+# AJOUTEZ CETTE LIGNE AU DÉBUT (après class_name) :
+const DebugUtils = preload("res://scripts/utils/DebugUtils.gd")
+
+
+
+# ... resto de votre code existant ...
+
+# Nouvelle fonction de test de téléportation
+func _test_teleportation():
+	"""Tester la téléportation pour vérifier le chargement des chunks"""
+	if player:
+		var current_pos = player.global_position
+		var test_pos = current_pos + Vector3(200, 0, 200)  # 200m plus loin
+		print("🚀 Test téléportation: ", current_pos, " → ", test_pos)
+		player.teleport_to_position(test_pos)
+		
+		# Retour automatique après 3 secondes
+		await get_tree().create_timer(3.0).timeout
+		player.teleport_to_position(current_pos)
+		print("🔙 Retour position initiale")
+
+# ... resto de votre GameManager existant ...

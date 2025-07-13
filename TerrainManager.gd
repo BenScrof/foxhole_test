@@ -1,6 +1,7 @@
 # ============================================
-# TerrainManager.gd - VERSION OPTIMISÉE MÉMOIRE
+# TerrainManager.gd - VERSION CORRIGÉE - Gestion complète des chunks
 # ============================================
+# Remplacez scenes/World/TerrainManager.gd par ceci :
 
 extends Node3D
 class_name TerrainManager
@@ -8,58 +9,61 @@ class_name TerrainManager
 # Paramètres des chunks
 @export var chunk_size: int = 16
 @export var chunk_resolution: int = 16
-@export var view_distance: int = 20         # RÉDUIT pour moins de charge
-@export var unload_distance: int = 24
-@export var max_chunks: int = 100          # LIMITE mémoire
+@export var view_distance: int = 8        # Distance de chargement des chunks
+@export var unload_distance: int = 12     # Distance de déchargement (doit être > view_distance)
 
 # Paramètres du terrain
 @export var terrain_height: float = 3.0
 @export var terrain_scale: float = 0.01
 @export var terrain_octaves: int = 2
 
-# Optimisations
-@export_group("Optimisations")
-@export var enable_lod: bool = true        # Level of Detail
-@export var lod_distance: int = 6          # Distance pour LOD réduit
-@export var update_frequency: float = 0.5  # Mise à jour toutes les 0.5s
-@export var enable_pooling: bool = true    # Pool de chunks
-@export var pool_size: int = 20            # Taille du pool
-@export var chunks_per_frame: int = 8      # Chunks générés par frame
-@export var chunks_unload_per_frame: int = 5  # Chunks déchargés par frame
-
 # Données internes
 var loaded_chunks: Dictionary = {}
-var chunk_pool: Array[Node3D] = []         # Pool pour réutilisation
-var player_chunk_pos: Vector2i = Vector2i(9999, 9999)
+var player_chunk_pos: Vector2i = Vector2i(9999, 9999)  # Position impossible au départ
+var last_player_position: Vector3 = Vector3.ZERO
 var noise: FastNoiseLite
 var chunk_scene: PackedScene
 
-# Cache et optimisations
-var height_cache: Dictionary = {}          # Cache des hauteurs
-var last_update_time: float = 0.0
-var chunks_to_load: Array[Vector2i] = []   # Queue de chargement
-var chunks_to_unload: Array[String] = []   # Queue de déchargement
+# Variables pour mise à jour continue
+var update_timer: float = 0.0
+var update_interval: float = 0.5  # Vérifier toutes les 0.5 secondes
 
 # Statistiques
-var total_chunks_created: int = 0
-var chunks_from_pool: int = 0
+var chunks_loaded_this_frame: int = 0
+var chunks_unloaded_this_frame: int = 0
 
 func _ready():
-	add_to_group("world")
-	print("🌍 === TERRAIN MANAGER OPTIMISÉ ===")
+	add_to_group("world")  # ← CRUCIAL pour que le player nous trouve
+	print("🌍 === TERRAIN MANAGER CORRIGÉ v2.0 ===")
 	
 	_setup_noise()
 	chunk_scene = preload("res://scenes/World/Chunk.tscn")
 	
-	# Initialiser le pool
-	if enable_pooling:
-		_initialize_chunk_pool()
+	# Attendre que le joueur soit prêt avant de générer le terrain initial
+	call_deferred("_wait_for_player_and_initialize")
 	
-	# Générer zone initiale plus petite
-	_generate_initial_area()
+	print("✅ TerrainManager initialisé, en attente du joueur...")
+
+func _wait_for_player_and_initialize():
+	"""Attendre que le joueur soit disponible avant de générer les chunks initiaux"""
+	var player = get_tree().get_first_node_in_group("player")
+	var attempts = 0
 	
-	print("✅ Terrain optimisé prêt: ", loaded_chunks.size(), " chunks, pool: ", chunk_pool.size())
-	print("⚡ Vitesse: ", chunks_per_frame, " chunks/frame")
+	# Attendre jusqu'à 60 frames (1 seconde à 60fps) que le joueur soit disponible
+	while not player and attempts < 60:
+		await get_tree().process_frame
+		player = get_tree().get_first_node_in_group("player")
+		attempts += 1
+	
+	if player:
+		print("✅ Joueur trouvé à la position: ", player.global_position)
+		# Générer les chunks initiaux autour de la position du joueur
+		_generate_initial_area_around_player(player.global_position)
+		# Mettre à jour la position du joueur une première fois
+		update_player_position(player.global_position)
+	else:
+		print("⚠️ Joueur non trouvé après ", attempts, " tentatives, génération par défaut")
+		_generate_initial_area_around_player(Vector3.ZERO)
 
 func _setup_noise():
 	noise = FastNoiseLite.new()
@@ -67,246 +71,223 @@ func _setup_noise():
 	noise.noise_type = FastNoiseLite.TYPE_PERLIN
 	noise.frequency = terrain_scale
 	noise.fractal_octaves = terrain_octaves
+	print("🎲 Générateur de bruit configuré")
 
-func _initialize_chunk_pool():
-	"""Créer un pool de chunks réutilisables"""
-	print("🏊 Initialisation pool de chunks...")
+func _generate_initial_area_around_player(player_pos: Vector3):
+	"""Générer une zone initiale autour de la position du joueur"""
+	print("🗺️ Génération zone initiale autour de: ", player_pos)
 	
-	for i in range(pool_size):
-		var chunk_instance = chunk_scene.instantiate()
-		chunk_instance.visible = false
-		chunk_instance.process_mode = Node.PROCESS_MODE_DISABLED
-		add_child(chunk_instance)
-		chunk_pool.append(chunk_instance)
+	# Calculer le chunk central du joueur
+	var center_chunk = Vector2i(
+		int(floor(player_pos.x / chunk_size)),
+		int(floor(player_pos.z / chunk_size))
+	)
 	
-	print("📦 Pool créé: ", chunk_pool.size(), " chunks")
-
-func _generate_initial_area():
-	"""Zone initiale chargée immédiatement pour éviter que le joueur tombe"""
-	print("🚀 Génération immédiate de la zone initiale...")
-	
-	for x in range(-2, 3):  # -2 à +2 = 5 chunks
-		for z in range(-2, 3):
+	# Générer une zone autour de ce chunk central
+	var initial_radius = 3  # Rayon de 3 chunks = zone 7x7
+	for x in range(center_chunk.x - initial_radius, center_chunk.x + initial_radius + 1):
+		for z in range(center_chunk.y - initial_radius, center_chunk.y + initial_radius + 1):
 			var chunk_pos = Vector2i(x, z)
-			_load_chunk(chunk_pos)  # Chargement immédiat
+			_load_chunk(chunk_pos)
 	
-	print("📦 Zone initiale générée immédiatement: ", loaded_chunks.size(), " chunks")
+	print("📦 Zone initiale générée: ", loaded_chunks.size(), " chunks autour de ", center_chunk)
 
-func _process(_delta):
-	# Limitation de fréquence des mises à jour
-	var current_time = Time.get_time_dict_from_system()["second"]
-	if current_time - last_update_time < update_frequency:
-		return
+func _process(delta):
+	"""Mise à jour continue du système de chunks"""
+	update_timer += delta
 	
-	last_update_time = current_time
-	
-	# Traiter les queues par petits paquets
-	_process_chunk_queue()
-	_process_unload_queue()
+	# Vérifier périodiquement les chunks même si le joueur n'a pas changé de chunk
+	if update_timer >= update_interval:
+		update_timer = 0.0
+		_periodic_chunk_update()
+
+func _periodic_chunk_update():
+	"""Mise à jour périodique pour s'assurer que tous les chunks nécessaires sont chargés"""
+	var player = get_tree().get_first_node_in_group("player")
+	if player:
+		var current_pos = player.global_position
+		# Forcer une mise à jour si le joueur a bougé significativement
+		if current_pos.distance_to(last_player_position) > chunk_size * 0.25:  # 1/4 de chunk
+			update_player_position(current_pos)
 
 func update_player_position(player_pos: Vector3):
+	"""Mettre à jour la position du joueur et gérer les chunks"""
+	last_player_position = player_pos
+	
+	# Calculer la nouvelle position du chunk du joueur
 	var new_chunk_pos = Vector2i(
 		int(floor(player_pos.x / chunk_size)),
 		int(floor(player_pos.z / chunk_size))
 	)
 	
-	if new_chunk_pos != player_chunk_pos:
-		player_chunk_pos = new_chunk_pos
-		_queue_chunks_update()
-
-func _queue_chunks_update():
-	"""Mettre en queue les chunks à charger/décharger"""
-	chunks_to_load.clear()
-	chunks_to_unload.clear()
+	# Ne mettre à jour que si le joueur a changé de chunk OU si c'est la première fois
+	var force_update = (player_chunk_pos == Vector2i(9999, 9999))  # Première initialisation
 	
-	# Queue des chunks à charger
+	if new_chunk_pos != player_chunk_pos or force_update:
+		print("🚶 Joueur dans chunk: ", new_chunk_pos, " (monde: ", 
+			  int(player_pos.x), ",", int(player_pos.y), ",", int(player_pos.z), ")")
+		
+		player_chunk_pos = new_chunk_pos
+		_update_chunks()
+
+func _update_chunks():
+	"""Mettre à jour les chunks : charger les nouveaux, décharger les anciens"""
+	chunks_loaded_this_frame = 0
+	chunks_unloaded_this_frame = 0
+	
+	# 1. CHARGEMENT des nouveaux chunks
+	_load_chunks_in_range()
+	
+	# 2. DÉCHARGEMENT des chunks trop loin
+	_unload_distant_chunks()
+	
+	# 3. Rapport des changements
+	if chunks_loaded_this_frame > 0 or chunks_unloaded_this_frame > 0:
+		print("📦 Chunks: +", chunks_loaded_this_frame, " -", chunks_unloaded_this_frame, 
+			  " (total: ", loaded_chunks.size(), ")")
+
+func _load_chunks_in_range():
+	"""Charger tous les chunks dans la zone de vue"""
 	for x in range(player_chunk_pos.x - view_distance, player_chunk_pos.x + view_distance + 1):
 		for z in range(player_chunk_pos.y - view_distance, player_chunk_pos.y + view_distance + 1):
 			var chunk_pos = Vector2i(x, z)
 			var chunk_key = _pos_to_key(chunk_pos)
 			
+			# Charger seulement si pas déjà chargé
 			if not loaded_chunks.has(chunk_key):
-				chunks_to_load.append(chunk_pos)
+				_load_chunk(chunk_pos)
+				chunks_loaded_this_frame += 1
+
+func _unload_distant_chunks():
+	"""Décharger les chunks trop éloignés"""
+	var chunks_to_unload = []
 	
-	# Queue des chunks à décharger
+	# Identifier les chunks à décharger
 	for chunk_key in loaded_chunks.keys():
 		var chunk_pos = _key_to_pos(chunk_key)
-		var distance = player_chunk_pos.distance_to(Vector2(chunk_pos))
+		var distance = max(
+			abs(chunk_pos.x - player_chunk_pos.x),
+			abs(chunk_pos.y - player_chunk_pos.y)
+		)
 		
+		# Si le chunk est trop loin, le marquer pour déchargement
 		if distance > unload_distance:
 			chunks_to_unload.append(chunk_key)
 	
-	print("📋 Queue: ", chunks_to_load.size(), " à charger, ", chunks_to_unload.size(), " à décharger")
-
-func _process_chunk_queue():
-	"""Traiter la queue de chargement par petits paquets"""
-	var processed = 0
-	
-	while chunks_to_load.size() > 0 and processed < chunks_per_frame:
-		var chunk_pos = chunks_to_load.pop_front()
-		
-		# Vérifier limite mémoire
-		if loaded_chunks.size() >= max_chunks:
-			print("⚠️ Limite chunks atteinte: ", max_chunks)
-			break
-		
-		_load_chunk(chunk_pos)
-		processed += 1
-	
-	if processed > 0:
-		print("📦 Chargé ", processed, " chunks cette frame")
-
-func _process_unload_queue():
-	"""Traiter la queue de déchargement"""
-	var processed = 0
-	
-	while chunks_to_unload.size() > 0 and processed < chunks_unload_per_frame:
-		var chunk_key = chunks_to_unload.pop_front()
+	# Décharger les chunks marqués
+	for chunk_key in chunks_to_unload:
 		_unload_chunk(chunk_key)
-		processed += 1
-	
-	if processed > 0:
-		print("🗑️ Déchargé ", processed, " chunks cette frame")
+		chunks_unloaded_this_frame += 1
 
 func _load_chunk(chunk_pos: Vector2i):
+	"""Charger un chunk spécifique"""
 	var chunk_key = _pos_to_key(chunk_pos)
 	
+	# Vérifier si déjà chargé (sécurité)
 	if loaded_chunks.has(chunk_key):
 		return
 	
-	var chunk_instance = _get_chunk_from_pool()
+	# Créer l'instance du chunk
+	var chunk_instance = chunk_scene.instantiate()
+	add_child(chunk_instance)
+	
+	# Positionner le chunk exactement
 	var world_pos = Vector3(
 		chunk_pos.x * chunk_size,
 		0,
 		chunk_pos.y * chunk_size
 	)
-	
 	chunk_instance.position = world_pos
-	chunk_instance.visible = true
-	chunk_instance.process_mode = Node.PROCESS_MODE_INHERIT
 	
-	# Déterminer résolution selon distance (LOD)
-	var distance = player_chunk_pos.distance_to(Vector2(chunk_pos))
-	var resolution = chunk_resolution
+	# Configurer le chunk
+	chunk_instance.setup_chunk(chunk_pos, chunk_size, chunk_resolution, noise, terrain_height)
 	
-	if enable_lod and distance > lod_distance:
-		resolution = max(8, chunk_resolution / 2)  # LOD réduit
-	
-	chunk_instance.setup_chunk(chunk_pos, chunk_size, resolution, noise, terrain_height)
+	# Stocker la référence
 	loaded_chunks[chunk_key] = chunk_instance
-	
-	total_chunks_created += 1
 
 func _unload_chunk(chunk_key: String):
-	"""Décharger un chunk et le remettre dans le pool"""
+	"""Décharger un chunk spécifique"""
 	if not loaded_chunks.has(chunk_key):
 		return
 	
 	var chunk_instance = loaded_chunks[chunk_key]
-	loaded_chunks.erase(chunk_key)
 	
-	# Remettre dans le pool si activé
-	if enable_pooling and chunk_pool.size() < pool_size:
-		chunk_instance.visible = false
-		chunk_instance.process_mode = Node.PROCESS_MODE_DISABLED
-		chunk_pool.append(chunk_instance)
-	else:
-		# Sinon détruire
+	# Retirer de la scène
+	if chunk_instance and is_instance_valid(chunk_instance):
 		chunk_instance.queue_free()
-
-func _get_chunk_from_pool() -> Node3D:
-	"""Récupérer un chunk du pool ou en créer un nouveau"""
-	if enable_pooling and chunk_pool.size() > 0:
-		chunks_from_pool += 1
-		return chunk_pool.pop_back()
-	else:
-		return chunk_scene.instantiate()
+	
+	# Retirer de notre dictionnaire
+	loaded_chunks.erase(chunk_key)
 
 func _pos_to_key(pos: Vector2i) -> String:
+	"""Convertir position en clé unique"""
 	return str(pos.x) + "," + str(pos.y)
 
 func _key_to_pos(key: String) -> Vector2i:
+	"""Convertir clé en position"""
 	var parts = key.split(",")
 	return Vector2i(int(parts[0]), int(parts[1]))
 
 func get_terrain_height_at_position(world_pos: Vector3) -> float:
-	"""Version avec cache pour optimiser"""
-	var cache_key = str(int(world_pos.x)) + "," + str(int(world_pos.z))
-	
-	if height_cache.has(cache_key):
-		return height_cache[cache_key]
-	
-	var height = 0.0
+	"""Obtenir la hauteur du terrain à une position donnée"""
 	if noise:
-		height = noise.get_noise_2d(world_pos.x, world_pos.z) * terrain_height
-	
-	# Limiter taille du cache
-	if height_cache.size() < 1000:
-		height_cache[cache_key] = height
-	
-	return height
+		return noise.get_noise_2d(world_pos.x, world_pos.z) * terrain_height
+	return 0.0
+
+# ============================================
+# MÉTHODES DE DEBUG ET DIAGNOSTIC
+# ============================================
 
 func debug_chunks():
-	print("=== DEBUG TERRAIN OPTIMISÉ ===")
-	print("Chunks chargés: ", loaded_chunks.size(), "/", max_chunks)
-	print("Pool disponible: ", chunk_pool.size())
-	print("Chunks créés total: ", total_chunks_created)
-	print("Chunks du pool: ", chunks_from_pool)
-	print("Cache hauteurs: ", height_cache.size())
-	print("Queue chargement: ", chunks_to_load.size())
-	print("Queue déchargement: ", chunks_to_unload.size())
-	print("Position joueur: ", player_chunk_pos)
-	print("Vitesse génération: ", chunks_per_frame, " chunks/frame")
-	print("Vitesse déchargement: ", chunks_unload_per_frame, " chunks/frame")
-	print("==============================")
+	"""Afficher des informations de debug sur les chunks"""
+	print("=== DEBUG CHUNKS ===")
+	print("Position joueur (chunk): ", player_chunk_pos)
+	print("Chunks chargés: ", loaded_chunks.size())
+	print("View distance: ", view_distance)
+	print("Unload distance: ", unload_distance)
+	
+	# Afficher la position de quelques chunks
+	var count = 0
+	for key in loaded_chunks.keys():
+		if count < 5:  # Afficher seulement les 5 premiers
+			var chunk = loaded_chunks[key]
+			var pos = chunk.position if chunk else "N/A"
+			print("  Chunk ", key, " à position: ", pos)
+		count += 1
+	
+	if loaded_chunks.size() > 5:
+		print("  ... et ", loaded_chunks.size() - 5, " autres chunks")
+	print("====================")
 
-func clear_height_cache():
-	"""Nettoyer le cache si nécessaire"""
-	height_cache.clear()
-	print("🧹 Cache hauteurs nettoyé")
+func force_chunk_update():
+	"""Forcer une mise à jour complète des chunks (pour debug)"""
+	print("🔄 Force mise à jour des chunks...")
+	_update_chunks()
 
-func get_memory_usage() -> Dictionary:
-	"""Statistiques d'utilisation mémoire"""
+func get_chunk_stats() -> Dictionary:
+	"""Retourner les statistiques des chunks pour l'UI de debug"""
 	return {
-		"loaded_chunks": loaded_chunks.size(),
-		"pool_size": chunk_pool.size(),
-		"height_cache_size": height_cache.size(),
-		"total_created": total_chunks_created,
-		"pool_reused": chunks_from_pool
+		"loaded_count": loaded_chunks.size(),
+		"player_chunk": player_chunk_pos,
+		"view_distance": view_distance,
+		"unload_distance": unload_distance,
+		"last_loaded": chunks_loaded_this_frame,
+		"last_unloaded": chunks_unloaded_this_frame
 	}
 
-func force_generate_around_player(radius: int = 3):
-	"""Génération forcée immédiate autour du joueur (urgence)"""
-	print("🚨 Génération d'urgence autour du joueur...")
-	
-	var generated = 0
-	for x in range(player_chunk_pos.x - radius, player_chunk_pos.x + radius + 1):
-		for z in range(player_chunk_pos.y - radius, player_chunk_pos.y + radius + 1):
-			var chunk_pos = Vector2i(x, z)
-			var chunk_key = _pos_to_key(chunk_pos)
-			
-			if not loaded_chunks.has(chunk_key):
-				_load_chunk(chunk_pos)
-				generated += 1
-	
-	print("⚡ Génération d'urgence terminée: ", generated, " chunks")
+# ============================================
+# MÉTHODES POUR AJUSTEMENTS EN RUNTIME
+# ============================================
 
-func set_generation_speed(speed: String):
-	"""Ajuster la vitesse de génération selon les besoins"""
-	match speed:
-		"slow":
-			chunks_per_frame = 2
-			chunks_unload_per_frame = 3
-			print("🐌 Vitesse lente: 2 chunks/frame")
-		"normal":
-			chunks_per_frame = 8
-			chunks_unload_per_frame = 5
-			print("🚶 Vitesse normale: 8 chunks/frame")
-		"fast":
-			chunks_per_frame = 16
-			chunks_unload_per_frame = 8
-			print("🏃 Vitesse rapide: 16 chunks/frame")
-		"instant":
-			chunks_per_frame = 50
-			chunks_unload_per_frame = 20
-			print("⚡ Vitesse instantanée: 50 chunks/frame")
+func set_view_distance(new_distance: int):
+	"""Changer la distance de vue en runtime"""
+	view_distance = max(1, new_distance)
+	unload_distance = max(view_distance + 2, unload_distance)
+	print("🔧 View distance changée: ", view_distance)
+	force_chunk_update()
+
+func set_unload_distance(new_distance: int):
+	"""Changer la distance de déchargement en runtime"""
+	unload_distance = max(view_distance + 1, new_distance)
+	print("🔧 Unload distance changée: ", unload_distance)
+	force_chunk_update()

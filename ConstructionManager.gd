@@ -1,6 +1,7 @@
 # ============================================
-# ConstructionManager.gd - Version Optimisée Mémoire
+# ConstructionManager.gd - Version avec Roue de Sélection
 # ============================================
+# Votre système optimisé + roue circulaire pour la sélection
 
 extends Node3D
 class_name ConstructionManager
@@ -11,11 +12,19 @@ class_name ConstructionManager
 @export var preview_alpha: float = 0.6
 
 @export_group("Types de Construction")
-@export var build_mode: String = "foundation"  # "foundation", "ramp"
 @export var foundation_model_path: String = "res://assets/models/fondation.tscn"
 @export var ramp_model_path: String = "res://assets/models/rampe_test.tscn"
+@export var coin_rampe_model_path: String = "res://assets/models/coin_rampe.tscn"
 
-var is_building: bool = false
+# États de construction
+enum BuildMode {
+	INACTIVE,
+	SELECTING,     # Nouveau : sélection avec roue
+	BUILDING       # Mode construction actif
+}
+
+var current_build_mode: BuildMode = BuildMode.INACTIVE
+var selected_foundation_type: FoundationSelectionWheel.FoundationType = FoundationSelectionWheel.FoundationType.NORMAL
 var current_rotation: float = 0.0
 var rotation_step: float = 90.0
 var current_build_height: float = 0.0
@@ -29,12 +38,15 @@ var ramp_material: StandardMaterial3D
 var preview_material_valid: StandardMaterial3D
 var preview_material_invalid: StandardMaterial3D
 
+# Scènes chargées
 var foundation_scene: PackedScene
 var ramp_scene: PackedScene
+var coin_rampe_scene: PackedScene
 
 # Cache pour optimisation mémoire
 var foundation_mesh_cache: Mesh
 var ramp_mesh_cache: Mesh
+var coin_rampe_mesh_cache: Mesh
 var ramp_snap_cache: Vector3
 var foundation_snap_cache: Dictionary
 
@@ -50,6 +62,11 @@ var ramp_base_rotation: Vector3 = Vector3.ZERO
 var update_counter: int = 0
 var update_frequency: int = 3  # Mise à jour tous les 3 frames
 
+# 🎡 NOUVEAU : Roue de sélection
+var selection_wheel: FoundationSelectionWheel
+var construction_ui: Control
+var info_label: Label
+
 func _ready():
 	add_to_group("construction_manager")
 	_setup_materials()
@@ -57,8 +74,9 @@ func _ready():
 	
 	await get_tree().process_frame
 	_find_references()
+	call_deferred("_setup_selection_wheel")
 	
-	print("🔨 Construction avec optimisations mémoire")
+	print("🔨 Construction avec roue de sélection")
 
 func _find_references():
 	player = get_tree().get_first_node_in_group("player")
@@ -103,6 +121,14 @@ func _load_and_cache_models():
 		_cache_ramp_data()
 	else:
 		print("⚠️ Modèle rampe non trouvé: ", ramp_model_path)
+	
+	# Cache coin rampe
+	if ResourceLoader.exists(coin_rampe_model_path):
+		coin_rampe_scene = load(coin_rampe_model_path)
+		print("✅ Modèle coin rampe chargé: ", coin_rampe_model_path)
+		_cache_coin_rampe_data()
+	else:
+		print("⚠️ Modèle coin rampe non trouvé: ", coin_rampe_model_path)
 
 func _cache_foundation_data():
 	"""Mettre en cache les données de la fondation pour éviter les instances répétées"""
@@ -147,24 +173,77 @@ func _cache_ramp_data():
 	temp_instance.queue_free()
 	print("📦 Cache rampe: snap à ", ramp_snap_cache)
 
+func _cache_coin_rampe_data():
+	"""Mettre en cache les données du coin rampe"""
+	if not coin_rampe_scene:
+		return
+		
+	var temp_instance = coin_rampe_scene.instantiate()
+	
+	# Cache mesh
+	var mesh_node = temp_instance.find_child("MeshInstance3D")
+	if mesh_node:
+		coin_rampe_mesh_cache = mesh_node.mesh
+	
+	temp_instance.queue_free()
+	print("📦 Cache coin rampe chargé")
+
 func _setup_preview():
 	preview_object = MeshInstance3D.new()
 	_update_preview_mesh()
 	add_child(preview_object)
 	preview_object.visible = false
 
+# 🎡 NOUVEAU : Configuration de la roue de sélection
+func _setup_selection_wheel():
+	"""Créer la roue de sélection"""
+	print("🎡 Configuration roue de sélection...")
+	
+	# Créer la roue
+	selection_wheel = FoundationSelectionWheel.new()
+	selection_wheel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	selection_wheel.z_index = 1000
+	
+	# Ajouter à la scène
+	get_tree().root.add_child.call_deferred(selection_wheel)
+	
+	await get_tree().process_frame
+	
+	# Connecter les signaux
+	selection_wheel.foundation_selected.connect(_on_foundation_selected)
+	selection_wheel.wheel_closed.connect(_on_wheel_closed)
+	
+	# Interface d'information
+	construction_ui = Control.new()
+	construction_ui.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	get_tree().root.add_child.call_deferred(construction_ui)
+	
+	await get_tree().process_frame
+	
+	info_label = Label.new()
+	info_label.position = Vector2(20, 100)
+	info_label.size = Vector2(400, 200)
+	info_label.add_theme_color_override("font_color", Color.YELLOW)
+	info_label.add_theme_font_size_override("font_size", 16)
+	construction_ui.add_child(info_label)
+	
+	construction_ui.visible = false
+	
+	print("✅ Roue de sélection configurée")
+
 func _update_preview_mesh():
 	preview_object.transform = Transform3D.IDENTITY
 	
-	match build_mode:
-		"foundation":
+	match selected_foundation_type:
+		FoundationSelectionWheel.FoundationType.NORMAL:
 			if foundation_mesh_cache:
 				preview_object.mesh = foundation_mesh_cache
 			else:
 				var box_mesh = BoxMesh.new()
 				box_mesh.size = Vector3(foundation_size, 0.3, foundation_size)
 				preview_object.mesh = box_mesh
-		"ramp":
+		
+		FoundationSelectionWheel.FoundationType.RAMPE:
 			if ramp_mesh_cache:
 				preview_object.mesh = ramp_mesh_cache
 			else:
@@ -172,47 +251,114 @@ func _update_preview_mesh():
 				prism_mesh.left_to_right = 1.0
 				prism_mesh.size = Vector3(2, 0.2, 4)
 				preview_object.mesh = prism_mesh
+		
+		FoundationSelectionWheel.FoundationType.COIN_RAMPE:
+			if coin_rampe_mesh_cache:
+				preview_object.mesh = coin_rampe_mesh_cache
+			else:
+				var box_mesh = BoxMesh.new()
+				box_mesh.size = Vector3(foundation_size, 0.3, foundation_size)
+				preview_object.mesh = box_mesh
 
 func _input(event):
-	if event.is_action_pressed("build_mode"):
-		toggle_build_mode()
-	
+	# 🎡 F pour ouvrir la roue de sélection
 	if event is InputEventKey and event.pressed and event.keycode == KEY_F:
-		_cycle_build_mode()
+		_toggle_selection_mode()
 	
-	if event is InputEventKey and event.pressed and event.keycode == KEY_TAB and build_mode == "ramp":
+	# TAB pour changer de face (seulement en mode rampe)
+	if event is InputEventKey and event.pressed and event.keycode == KEY_TAB and selected_foundation_type == FoundationSelectionWheel.FoundationType.RAMPE and current_build_mode == BuildMode.BUILDING:
 		_cycle_face()
 		get_viewport().set_input_as_handled()
 	
-	if is_building:
+	# Hauteur en mode construction
+	if current_build_mode == BuildMode.BUILDING:
 		if event.is_action_pressed("height_up"):
 			adjust_build_height(0.2)
 		elif event.is_action_pressed("height_down"):
 			adjust_build_height(-0.2)
 	
-	if event.is_action_pressed("rotate_building") and is_building:
+	# Rotation en mode construction
+	if event.is_action_pressed("rotate_building") and current_build_mode == BuildMode.BUILDING:
 		rotate_preview()
 	
-	if is_building and (event.is_action_pressed("ui_accept") or event.is_action_pressed("place_building")):
+	# Placement
+	if current_build_mode == BuildMode.BUILDING and (event.is_action_pressed("ui_accept") or event.is_action_pressed("place_building")):
 		_try_place_structure()
 	
-	if is_building and (event.is_action_pressed("ui_cancel") or event.is_action_pressed("cancel_building")):
-		toggle_build_mode()
+	# Annulation
+	if current_build_mode == BuildMode.BUILDING and (event.is_action_pressed("ui_cancel") or event.is_action_pressed("cancel_building")):
+		_exit_build_mode()
 
-func _cycle_build_mode():
-	match build_mode:
-		"foundation":
-			build_mode = "ramp"
-			selected_face = 0
-			print("🏗️ Mode: Rampe (Tab pour changer face)")
-		"ramp":
-			build_mode = "foundation"
-			print("🏗️ Mode: Fondation")
+# 🎡 NOUVEAUX : Gestion de la roue de sélection
+func _toggle_selection_mode():
+	"""Basculer entre les modes"""
+	match current_build_mode:
+		BuildMode.INACTIVE:
+			_enter_selection_mode()
+		BuildMode.SELECTING:
+			_exit_build_mode()
+		BuildMode.BUILDING:
+			_enter_selection_mode()
+
+func _enter_selection_mode():
+	"""Entrer en mode sélection (ouvrir la roue)"""
+	current_build_mode = BuildMode.SELECTING
+	selection_wheel.show_wheel()
 	
+	# Cacher la prévisualisation
+	if preview_object:
+		preview_object.visible = false
+	
+	print("🎡 Mode sélection activé")
+
+func _exit_build_mode():
+	"""Sortir complètement du mode construction"""
+	current_build_mode = BuildMode.INACTIVE
+	
+	# Cacher tout
+	if preview_object:
+		preview_object.visible = false
+	if construction_ui:
+		construction_ui.visible = false
+	
+	# Restaurer le mode souris
+	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+	
+	print("🚶 Mode déplacement")
+
+func _on_foundation_selected(foundation_type: FoundationSelectionWheel.FoundationType, scene_path: String):
+	"""Callback : type sélectionné dans la roue"""
+	selected_foundation_type = foundation_type
+	current_build_mode = BuildMode.BUILDING
+	
+	# Mettre à jour le mesh de prévisualisation
 	_update_preview_mesh()
 	
-	if is_building:
-		preview_object.visible = true
+	# Afficher l'interface de construction
+	if construction_ui:
+		construction_ui.visible = true
+	
+	# Restaurer le mode FPS
+	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+	
+	print("🏗️ Mode construction : ", _get_foundation_type_name(foundation_type))
+
+func _on_wheel_closed():
+	"""Callback : roue fermée sans sélection"""
+	if current_build_mode == BuildMode.SELECTING:
+		_exit_build_mode()
+
+func _get_foundation_type_name(type: FoundationSelectionWheel.FoundationType) -> String:
+	"""Obtenir le nom d'un type"""
+	match type:
+		FoundationSelectionWheel.FoundationType.NORMAL:
+			return "Fondation"
+		FoundationSelectionWheel.FoundationType.RAMPE:
+			return "Rampe"
+		FoundationSelectionWheel.FoundationType.COIN_RAMPE:
+			return "Coin Rampe"
+		_:
+			return "Inconnu"
 
 func _cycle_face():
 	selected_face = (selected_face + 1) % 4
@@ -224,38 +370,65 @@ func adjust_build_height(delta: float):
 	current_build_height = clamp(current_build_height, -5.0, 10.0)
 	print("🏗️ Hauteur: ", snappedf(current_build_height, 0.1), "m")
 
-func toggle_build_mode():
-	is_building = !is_building
-	current_rotation = 0.0
-	
-	if is_building:
-		print("🔨 Mode construction")
-		_update_preview_mesh()
-		preview_object.visible = true
-	else:
-		preview_object.visible = false
-		print("🚶 Mode déplacement")
-
 func rotate_preview():
 	current_rotation += rotation_step
 	if current_rotation >= 360:
 		current_rotation = 0
 
 func _process(_delta):
-	if is_building and preview_object.visible:
+	if current_build_mode == BuildMode.BUILDING and preview_object.visible:
 		update_counter += 1
 		if update_counter >= update_frequency:
 			update_counter = 0
 			_update_preview()
+			_update_construction_ui()
+
+func _update_construction_ui():
+	"""Mettre à jour l'interface de construction"""
+	if not info_label:
+		return
+	
+	var text = ""
+	
+	match current_build_mode:
+		BuildMode.INACTIVE:
+			text = "F: Ouvrir sélection"
+		
+		BuildMode.SELECTING:
+			text = "Sélectionnez un type de fondation"
+		
+		BuildMode.BUILDING:
+			text = "🏗️ Mode Construction\n"
+			text += "Type: " + _get_foundation_type_name(selected_foundation_type) + "\n"
+			text += "Rotation: " + str(int(current_rotation)) + "°\n"
+			text += "Hauteur: " + str(snappedf(current_build_height, 0.1)) + "m\n"
+			
+			if selected_foundation_type == FoundationSelectionWheel.FoundationType.RAMPE:
+				var face_names = ["Nord", "Est", "Sud", "Ouest"]
+				text += "Face: " + face_names[selected_face] + "\n"
+			
+			text += "\nContrôles:\n"
+			text += "  Clic gauche: Placer\n"
+			text += "  R: Rotation\n"
+			if selected_foundation_type == FoundationSelectionWheel.FoundationType.RAMPE:
+				text += "  TAB: Changer face\n"
+			text += "  F: Changer type\n"
+			text += "  Échap: Annuler\n\n"
+			text += "Placement: " + ("✅ Valide" if preview_valid else "❌ Invalide")
+	
+	info_label.text = text
 
 func _update_preview():
 	if not player or not camera:
 		return
 	
-	if build_mode == "foundation":
-		_update_foundation_preview()
-	elif build_mode == "ramp":
-		_update_ramp_preview()
+	match selected_foundation_type:
+		FoundationSelectionWheel.FoundationType.NORMAL:
+			_update_foundation_preview()
+		FoundationSelectionWheel.FoundationType.RAMPE:
+			_update_ramp_preview()
+		FoundationSelectionWheel.FoundationType.COIN_RAMPE:
+			_update_coin_rampe_preview()
 
 func _update_foundation_preview():
 	var target_position = _calculate_build_position()
@@ -319,6 +492,10 @@ func _update_ramp_preview():
 		else:
 			preview_object.visible = false
 
+func _update_coin_rampe_preview():
+	# Pour l'instant, même logique que la fondation
+	_update_foundation_preview()
+
 func _calculate_build_position() -> Vector3:
 	var from = camera.global_position
 	var to = from + (-camera.global_transform.basis.z) * max_build_distance
@@ -375,14 +552,8 @@ func _snap_to_grid(pos: Vector3) -> Vector3:
 	return Vector3(snapped_x, pos.y, snapped_z)
 
 func _is_position_valid(pos: Vector3) -> bool:
-	if build_mode == "foundation":
-		if player and player.global_position.distance_to(pos) > max_build_distance:
-			return false
-		return true
-	
 	if player and player.global_position.distance_to(pos) > max_build_distance:
 		return false
-	
 	return true
 
 func _try_place_structure():
@@ -390,10 +561,13 @@ func _try_place_structure():
 		print("❌ Placement impossible")
 		return
 	
-	if build_mode == "foundation":
-		_place_foundation_at(preview_position)
-	elif build_mode == "ramp":
-		_place_ramp_at(preview_position)
+	match selected_foundation_type:
+		FoundationSelectionWheel.FoundationType.NORMAL:
+			_place_foundation_at(preview_position)
+		FoundationSelectionWheel.FoundationType.RAMPE:
+			_place_ramp_at(preview_position)
+		FoundationSelectionWheel.FoundationType.COIN_RAMPE:
+			_place_coin_rampe_at(preview_position)
 
 func _place_foundation_at(pos: Vector3):
 	var grid_2d = Vector2i(int(pos.x / foundation_size), int(pos.z / foundation_size))
@@ -416,6 +590,7 @@ func _create_foundation_from_scene(pos: Vector3) -> Node3D:
 	
 	var foundation = foundation_scene.instantiate()
 	foundation.name = "Foundation_" + str(placed_foundations.size())
+	foundation.add_to_group("foundations")  # Important pour les snaps
 	
 	var collision_node = foundation.find_child("CollisionShape3D")
 	if collision_node:
@@ -443,12 +618,28 @@ func _place_ramp_at(pos: Vector3):
 	
 	var ramp_instance = ramp_scene.instantiate()
 	ramp_instance.name = "Ramp_" + str(placed_foundations.size())
+	ramp_instance.add_to_group("foundations")  # Important pour les snaps
 	
 	get_tree().root.add_child(ramp_instance)
 	ramp_instance.global_position = pos
 	ramp_instance.rotation_degrees = preview_object.rotation_degrees
 	
 	print("✅ Rampe placée avec snap!")
+
+func _place_coin_rampe_at(pos: Vector3):
+	if not coin_rampe_scene:
+		print("❌ Modèle coin rampe non disponible")
+		return
+	
+	var coin_rampe_instance = coin_rampe_scene.instantiate()
+	coin_rampe_instance.name = "CoinRampe_" + str(placed_foundations.size())
+	coin_rampe_instance.add_to_group("foundations")  # Important pour les snaps
+	
+	get_tree().root.add_child(coin_rampe_instance)
+	coin_rampe_instance.global_position = pos
+	coin_rampe_instance.rotation_degrees.y = current_rotation
+	
+	print("✅ Coin rampe placé!")
 
 func _get_snap_points(object: Node3D) -> Dictionary:
 	var snap_points = {}
