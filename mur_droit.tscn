@@ -19,12 +19,6 @@ mesh = SubResource("BoxMesh_7pr6y")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
 shape = SubResource("ConcavePolygonShape3D_7pr6y")
 
-[node name="SnapFace_north" type="Area3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0.5)
-
-[node name="CollisionShape3D" type="CollisionShape3D" parent="SnapFace_north"]
-shape = SubResource("BoxShape3D_7pr6y")
-
 [node name="SnapFace_south" type="Area3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, -0.5)
 

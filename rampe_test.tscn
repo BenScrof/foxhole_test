@@ -15,5 +15,5 @@ mesh = SubResource("PrismMesh_tge12")
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]
 shape = SubResource("ConvexPolygonShape3D_tge12")
 
-[node name="SnapPoint_Entry" type="Node3D" parent="."]
+[node name="SnapPoint_Side_South" type="Node3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0)
